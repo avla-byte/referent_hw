@@ -3,7 +3,7 @@ export default function Home() {
     <main className="main">
       <div className="container">
         <h1>Добро пожаловать в Next.js!</h1>
-        <p>Минимальное приложение успешно запущено.</p>
+        <p>Я изучаю Next.js.</p>
       </div>
     </main>
   )
