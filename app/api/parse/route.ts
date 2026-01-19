@@ -135,10 +135,10 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
     // Убираем заведомо «шумные» элементы
     $(noisySelectors.join(',')).remove()
 
-    let bestElement: cheerio.Cheerio | null = null
+    let bestElement: cheerio.Cheerio<any> | null = null
     let bestLength = 0
 
-    const seen = new Set<cheerio.Element>()
+    const seen = new Set<any>()
 
     for (const selector of containerSelectors) {
       $(selector).each((_, element) => {
@@ -169,9 +169,10 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
 
     let finalText: string | null = null
 
-    if (bestElement && bestLength > 0) {
+    if (bestElement != null && bestLength > 0) {
       const parts: string[] = []
-      bestElement.find('p, li').each((_, node) => {
+      const $best = bestElement as cheerio.Cheerio<any>
+      $best.find('p, li').each((_, node: any) => {
         const part = $(node).text().replace(/\s+/g, ' ').trim()
         if (part.length > 0) {
           parts.push(part)
