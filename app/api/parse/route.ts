@@ -100,11 +100,76 @@ function extractTitle($: cheerio.CheerioAPI): string | null {
   }
 }
 
+function extractTextFromElement(
+  $: cheerio.CheerioAPI,
+  $el: cheerio.Cheerio<any>,
+): string {
+  const textParts: string[] = []
+
+  // Расширенный поиск текстовых элементов
+  const textSelectors = [
+    'p',
+    'li',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'blockquote',
+    'pre',
+    'code',
+    'div',
+  ]
+
+  // Сначала пробуем стандартные текстовые элементы
+  $el.find(textSelectors.join(',')).each((_, node: any) => {
+    const $node = $(node)
+    const tagName = $node.prop('tagName')?.toLowerCase()
+
+    // Для div проверяем, что внутри есть текст (не только вложенные элементы)
+    if (tagName === 'div') {
+      const directText = $node
+        .contents()
+        .filter(function (this: any) {
+          return this.nodeType === 3 // текстовый узел
+        })
+        .text()
+        .trim()
+
+      if (directText.length > 20) {
+        // div с достаточным количеством прямого текста
+        textParts.push(directText)
+      } else {
+        // Проверяем, есть ли внутри текстовые элементы
+        const hasTextContent =
+          $node.find('p, li, h1, h2, h3, h4, h5, h6').length > 0
+        if (!hasTextContent) {
+          const text = $node.text().replace(/\s+/g, ' ').trim()
+          if (text.length > 20) {
+            textParts.push(text)
+          }
+        }
+      }
+    } else {
+      // Для остальных элементов просто берём текст
+      const part = $node.text().replace(/\s+/g, ' ').trim()
+      if (part.length > 0) {
+        textParts.push(part)
+      }
+    }
+  })
+
+  return textParts.join('\n\n').trim()
+}
+
 function extractMainContent($: cheerio.CheerioAPI): string | null {
   try {
     const containerSelectors = [
+      'main',
       'article',
       '[role="article"]',
+      '[role="main"]',
       '.post',
       '.post-content',
       '.article',
@@ -112,8 +177,11 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
       '.entry-content',
       '.content',
       '.main-content',
+      '.page-content',
+      '.post-body',
       '#content',
       '#main',
+      '#article',
     ]
 
     const noisySelectors = [
@@ -130,6 +198,10 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
       '.share',
       '.social',
       '.breadcrumbs',
+      '.menu',
+      '.navigation',
+      '.footer',
+      '.header',
     ]
 
     // Убираем заведомо «шумные» элементы
@@ -140,24 +212,14 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
 
     const seen = new Set<any>()
 
+    // Ищем лучший контейнер
     for (const selector of containerSelectors) {
       $(selector).each((_, element) => {
         if (seen.has(element)) return
         seen.add(element)
 
         const $el = $(element)
-
-        // Берём только текст абзацев и списков внутри контейнера,
-        // игнорируя вложенные кнопки, формы и т.п.
-        const textParts: string[] = []
-        $el.find('p, li').each((__, node) => {
-          const part = $(node).text().replace(/\s+/g, ' ').trim()
-          if (part.length > 0) {
-            textParts.push(part)
-          }
-        })
-
-        const text = textParts.join('\n\n').trim()
+        const text = extractTextFromElement($, $el)
         const length = text.length
 
         if (length > bestLength) {
@@ -169,34 +231,54 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
 
     let finalText: string | null = null
 
+    // Извлекаем текст из лучшего контейнера
     if (bestElement != null && bestLength > 0) {
-      const parts: string[] = []
-      const $best = bestElement as cheerio.Cheerio<any>
-      $best.find('p, li').each((_, node: any) => {
-        const part = $(node).text().replace(/\s+/g, ' ').trim()
-        if (part.length > 0) {
-          parts.push(part)
-        }
-      })
-      finalText = parts.join('\n\n').trim() || null
+      finalText = extractTextFromElement($, bestElement)
     }
 
-    // Фоллбек: если ничего не нашли в спец‑контейнерах, аккуратно
-    // собираем текст из <body>, также только из p и li.
+    // Фоллбек 1: если ничего не нашли или слишком мало, пробуем main или body
+    if (!finalText || finalText.length < 200) {
+      const fallbackSelectors = ['main', 'body']
+      for (const selector of fallbackSelectors) {
+        const $fallback = $(selector).first()
+        if ($fallback.length > 0) {
+          const fallbackText = extractTextFromElement($, $fallback)
+          if (fallbackText.length > (finalText?.length ?? 0)) {
+            finalText = fallbackText
+          }
+        }
+      }
+    }
+
+    // Фоллбек 2: если всё ещё мало, пробуем более агрессивный подход
     if (!finalText || finalText.length < 200) {
       const bodyParts: string[] = []
       $('body')
-        .find('p, li')
-        .each((_, node) => {
-          const part = $(node).text().replace(/\s+/g, ' ').trim()
-          if (part.length > 0) {
+        .find('p, li, h1, h2, h3, h4, h5, h6, div')
+        .each((_, node: any) => {
+          const $node = $(node)
+          // Пропускаем элементы с классами, указывающими на навигацию/меню
+          const className = ($node.attr('class') || '').toLowerCase()
+          if (
+            className.includes('nav') ||
+            className.includes('menu') ||
+            className.includes('header') ||
+            className.includes('footer') ||
+            className.includes('sidebar')
+          ) {
+            return
+          }
+
+          const part = $node.text().replace(/\s+/g, ' ').trim()
+          if (part.length > 20) {
+            // Минимальная длина для включения
             bodyParts.push(part)
           }
         })
 
       const bodyText = bodyParts.join('\n\n').trim()
       if (bodyText.length > (finalText?.length ?? 0)) {
-        finalText = bodyText || finalText
+        finalText = bodyText
       }
     }
 
@@ -204,6 +286,11 @@ function extractMainContent($: cheerio.CheerioAPI): string | null {
     if (finalText && finalText.length > 20000) {
       finalText = `${finalText.slice(0, 20000)}\n\n[контент обрезан]`
     }
+
+    console.log('[API /parse] Извлечён контент', {
+      length: finalText?.length ?? 0,
+      preview: finalText?.slice(0, 100) ?? null,
+    })
 
     return finalText ?? null
   } catch (error) {
