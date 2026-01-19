@@ -2,6 +2,12 @@
 
 import { useCallback, useMemo, useState } from 'react'
 
+interface ParsedArticle {
+  date: string | null
+  title: string | null
+  content: string | null
+}
+
 type ActionType = 'summary' | 'thesis' | 'telegram'
 
 interface ActionMeta {
@@ -95,43 +101,60 @@ export default function Home() {
       setError(null)
       setSelectedAction(action)
       setIsLoading(true)
+      setResult('')
 
       try {
-        console.log('[UI] Подготовка к запросу в AI', { url, action })
+        console.log('[UI] Запускаем парсинг статьи через API', { url, action })
 
-        // Здесь в будущем будет вызов вашего backend / AI-API.
-        // Сейчас — заглушка, имитирующая ответ.
-        await new Promise((resolve) => setTimeout(resolve, 800))
-
-        let fakeResult: string
-
-        switch (action) {
-          case 'summary':
-            fakeResult =
-              'Здесь будет краткий пересказ статьи на русском языке на основе указанного URL.'
-            break
-          case 'thesis':
-            fakeResult =
-              'Здесь появится список ключевых тезисов статьи на русском языке.'
-            break
-          case 'telegram':
-            fakeResult =
-              'Здесь будет готовый пост для Telegram с основными идеями статьи.'
-            break
-          default:
-            fakeResult = 'Неизвестный тип действия.'
-        }
-
-        console.log('[UI] Получен ответ (заглушка) от AI', {
-          action,
-          fakeResult,
+        const response = await fetch('/api/parse', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ url }),
         })
 
-        setResult(fakeResult)
+        if (!response.ok) {
+          const errorPayload = (await response.json().catch(() => null)) as
+            | { error?: string }
+            | null
+
+          console.error('[UI] API /parse вернул ошибку', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorPayload?.error,
+          })
+
+          setResult(
+            errorPayload?.error ||
+              'Не удалось распарсить статью. Попробуйте другой URL или позже.',
+          )
+          return
+        }
+
+        const data = (await response.json()) as ParsedArticle
+
+        console.log('[UI] Успешно получили результат парсинга', {
+          hasDate: Boolean(data.date),
+          hasTitle: Boolean(data.title),
+          contentLength: data.content?.length ?? 0,
+        })
+
+        const prettyJson = JSON.stringify(
+          {
+            date: data.date ?? null,
+            title: data.title ?? null,
+            content: data.content ?? null,
+          },
+          null,
+          2,
+        )
+
+        setResult(prettyJson)
       } catch (caughtError) {
-        console.error('[UI] Ошибка при обработке запроса к AI', caughtError)
+        console.error('[UI] Ошибка при обращении к API /parse', caughtError)
         setResult(
-          'Произошла ошибка при обращении к AI. Попробуйте ещё раз чуть позже.',
+          'Произошла ошибка при обращении к серверу. Проверьте подключение к интернету и попробуйте ещё раз.',
         )
       } finally {
         setIsLoading(false)
@@ -247,7 +270,9 @@ export default function Home() {
                     {selectedActionMeta.label}
                   </p>
                 )}
-                <p>{result}</p>
+                <pre className="whitespace-pre-wrap break-words text-xs text-slate-100">
+                  {result}
+                </pre>
               </>
             ) : (
               <p className="text-xs text-slate-500">
