@@ -8,7 +8,7 @@ interface ParsedArticle {
   content: string | null
 }
 
-type ActionType = 'summary' | 'thesis' | 'telegram'
+type ActionType = 'summary' | 'thesis' | 'telegram' | 'translate'
 
 interface ActionMeta {
   id: ActionType
@@ -31,6 +31,11 @@ const ACTIONS: ActionMeta[] = [
     id: 'telegram',
     label: 'Пост для Telegram',
     description: 'Готовый пост для канала или личного блога.',
+  },
+  {
+    id: 'translate',
+    label: 'Перевод',
+    description: 'Полный перевод статьи на русский язык.',
   },
 ]
 
@@ -139,6 +144,35 @@ export default function Home() {
           hasTitle: Boolean(data.title),
           contentLength: data.content?.length ?? 0,
         })
+
+        if (action === 'translate') {
+          const textToTranslate = [data.title, data.content]
+            .filter(Boolean)
+            .join('\n\n')
+          if (!textToTranslate.trim()) {
+            setResult('Не удалось извлечь текст статьи для перевода.')
+            return
+          }
+          const translateRes = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: textToTranslate }),
+          })
+          if (!translateRes.ok) {
+            const errPayload = (await translateRes.json().catch(() => null)) as
+              | { error?: string }
+              | null
+            setResult(
+              errPayload?.error ?? 'Ошибка перевода. Попробуйте позже.',
+            )
+            return
+          }
+          const { translation } = (await translateRes.json()) as {
+            translation: string
+          }
+          setResult(translation ?? '')
+          return
+        }
 
         const prettyJson = JSON.stringify(
           {
