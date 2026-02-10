@@ -71,6 +71,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false)
   const [selectedAction, setSelectedAction] = useState<ActionType | null>(null)
   const [result, setResult] = useState<string>('')
+  const [isCopied, setIsCopied] = useState(false)
 
   const selectedActionMeta = useMemo(
     () => ACTIONS.find((action) => action.id === selectedAction) ?? null,
@@ -82,14 +83,30 @@ export default function Home() {
       const nextValue = event.target.value
       setUrl(nextValue)
 
+      if (isCopied) {
+        setIsCopied(false)
+      }
+
       if (error) {
         // Перепроверяем валидацию по мере ввода
         const nextError = validateUrl(nextValue)
         setError(nextError)
       }
     },
-    [error],
+    [error, isCopied],
   )
+
+  const handleCopyClick = useCallback(async () => {
+    if (!result) return
+    try {
+      await navigator.clipboard.writeText(result)
+      setIsCopied(true)
+      console.log('[UI] Результат скопирован в буфер обмена')
+    } catch (copyError) {
+      console.error('[UI] Не удалось скопировать текст', copyError)
+      setIsCopied(false)
+    }
+  }, [result])
 
   const handleActionClick = useCallback(
     async (action: ActionType) => {
@@ -321,12 +338,23 @@ export default function Home() {
                 Здесь появится текст на русском после обработки статьи.
               </p>
             </div>
-            {isLoading && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-                Обработка...
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {result && !isLoading && (
+                <button
+                  type="button"
+                  onClick={handleCopyClick}
+                  className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-[11px] font-medium text-slate-200 shadow-sm transition hover:border-emerald-400 hover:text-emerald-300"
+                >
+                  {isCopied ? 'Скопировано' : 'Скопировать'}
+                </button>
+              )}
+              {isLoading && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-medium text-emerald-300">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                  Обработка...
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="mt-2 min-h-[120px] rounded-lg border border-dashed border-slate-700 bg-slate-900/60 p-3 text-sm leading-relaxed text-slate-200">
