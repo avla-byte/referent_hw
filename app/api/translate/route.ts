@@ -1,19 +1,8 @@
 import { NextResponse } from 'next/server'
-
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const MODEL = 'deepseek/deepseek-chat'
+import { getOpenRouterApiKey, OPENROUTER_URL, OPENROUTER_MODEL } from '@/lib/openrouter'
 
 interface TranslateRequestBody {
   content?: string
-}
-
-function getApiKey(): string {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key || !key.trim()) {
-    console.error('[API /translate] OPENROUTER_API_KEY не задан в .env.local')
-    throw new Error('Сервис перевода не настроен: отсутствует API-ключ')
-  }
-  return key.trim()
 }
 
 export async function POST(request: Request) {
@@ -30,17 +19,18 @@ export async function POST(request: Request) {
       )
     }
 
-    const apiKey = getApiKey()
+    const apiKey = getOpenRouterApiKey()
+    const origin = request.headers.get('origin')
 
     const response = await fetch(OPENROUTER_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
-        'HTTP-Referer': request.headers.get('origin') || '',
+        'HTTP-Referer': origin || '',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: OPENROUTER_MODEL,
         messages: [
           {
             role: 'user',

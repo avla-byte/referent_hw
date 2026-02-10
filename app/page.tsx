@@ -109,55 +109,97 @@ export default function Home() {
       setResult('')
 
       try {
-        console.log('[UI] Запускаем парсинг статьи через API', { url, action })
-
-        const response = await fetch('/api/parse', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ url }),
-        })
-
-        if (!response.ok) {
-          const errorPayload = (await response.json().catch(() => null)) as
-            | { error?: string }
-            | null
-
-          console.error('[UI] API /parse вернул ошибку', {
-            status: response.status,
-            statusText: response.statusText,
-            error: errorPayload?.error,
+        // Для кнопок summary, thesis, telegram используем новый endpoint /api/generate
+        if (action === 'summary' || action === 'thesis' || action === 'telegram') {
+          console.log('[UI] Запускаем генерацию через API /generate', {
+            url,
+            action,
           })
 
-          setResult(
-            errorPayload?.error ||
-              'Не удалось распарсить статью. Попробуйте другой URL или позже.',
-          )
+          const response = await fetch('/api/generate', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ url, mode: action }),
+          })
+
+          if (!response.ok) {
+            const errorPayload = (await response.json().catch(() => null)) as
+              | { error?: string }
+              | null
+
+            console.error('[UI] API /generate вернул ошибку', {
+              status: response.status,
+              statusText: response.statusText,
+              error: errorPayload?.error,
+            })
+
+            setResult(
+              errorPayload?.error ||
+                'Не удалось сгенерировать контент. Попробуйте позже.',
+            )
+            return
+          }
+
+          const data = (await response.json()) as { result: string }
+
+          console.log('[UI] Успешно получили результат генерации', {
+            action,
+            resultLength: data.result?.length ?? 0,
+          })
+
+          setResult(data.result ?? '')
           return
         }
 
-        const data = (await response.json()) as ParsedArticle
-
-        console.log('[UI] Успешно получили результат парсинга', {
-          hasDate: Boolean(data.date),
-          hasTitle: Boolean(data.title),
-          contentLength: data.content?.length ?? 0,
-        })
-
+        // Для translate используем старый путь через /api/parse и /api/translate
         if (action === 'translate') {
-          const textToTranslate = [data.title, data.content]
+          console.log('[UI] Запускаем перевод через API /parse и /api/translate', {
+            url,
+          })
+
+          const parseResponse = await fetch('/api/parse', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ url }),
+          })
+
+          if (!parseResponse.ok) {
+            const errorPayload = (await parseResponse.json().catch(() => null)) as
+              | { error?: string }
+              | null
+
+            console.error('[UI] API /parse вернул ошибку', {
+              status: parseResponse.status,
+              error: errorPayload?.error,
+            })
+
+            setResult(
+              errorPayload?.error ||
+                'Не удалось распарсить статью. Попробуйте другой URL или позже.',
+            )
+            return
+          }
+
+          const parsedData = (await parseResponse.json()) as ParsedArticle
+
+          const textToTranslate = [parsedData.title, parsedData.content]
             .filter(Boolean)
             .join('\n\n')
           if (!textToTranslate.trim()) {
             setResult('Не удалось извлечь текст статьи для перевода.')
             return
           }
+
           const translateRes = await fetch('/api/translate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: textToTranslate }),
           })
+
           if (!translateRes.ok) {
             const errPayload = (await translateRes.json().catch(() => null)) as
               | { error?: string }
@@ -167,6 +209,7 @@ export default function Home() {
             )
             return
           }
+
           const { translation } = (await translateRes.json()) as {
             translation: string
           }
@@ -174,19 +217,10 @@ export default function Home() {
           return
         }
 
-        const prettyJson = JSON.stringify(
-          {
-            date: data.date ?? null,
-            title: data.title ?? null,
-            content: data.content ?? null,
-          },
-          null,
-          2,
-        )
-
-        setResult(prettyJson)
+        // Фоллбек для неизвестных действий (не должно произойти)
+        setResult('Неизвестное действие')
       } catch (caughtError) {
-        console.error('[UI] Ошибка при обращении к API /parse', caughtError)
+        console.error('[UI] Ошибка при обращении к API', caughtError)
         setResult(
           'Произошла ошибка при обращении к серверу. Проверьте подключение к интернету и попробуйте ещё раз.',
         )
@@ -272,9 +306,8 @@ export default function Home() {
             })}
           </div>
           <p className="text-xs text-slate-500">
-            Кнопка запускает обработку указанной статьи. В этой версии интерфейса
-            показан только фронтенд; подключение реального AI будет добавлено
-            отдельным шагом.
+            Кнопка запускает обработку указанной статьи через AI. Для генерации
+            используется модель deepseek/deepseek-chat через OpenRouter.
           </p>
         </section>
 
@@ -304,9 +337,23 @@ export default function Home() {
                     {selectedActionMeta.label}
                   </p>
                 )}
-                <pre className="whitespace-pre-wrap break-words text-xs text-slate-100">
-                  {result}
-                </pre>
+                {selectedAction === 'thesis' ? (
+                  <div className="space-y-1.5 text-xs text-slate-100">
+                    {result
+                      .split('\n')
+                      .filter((line) => line.trim())
+                      .map((line, index) => (
+                        <div key={index} className="flex items-start gap-2">
+                          <span className="mt-1 text-emerald-400">•</span>
+                          <span className="flex-1">{line.trim()}</span>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <pre className="whitespace-pre-wrap break-words text-xs text-slate-100">
+                    {result}
+                  </pre>
+                )}
               </>
             ) : (
               <p className="text-xs text-slate-500">
@@ -320,7 +367,7 @@ export default function Home() {
         <footer className="flex flex-col items-start justify-between gap-3 border-t border-slate-800 pt-4 text-xs text-slate-500 md:flex-row md:items-center">
           <span>Референт HW · учебное приложение на Next.js + Tailwind CSS</span>
           <span className="text-slate-600">
-            Следующий шаг: подключить backend и реальный AI‑провайдер.
+            Генерация через OpenRouter AI (deepseek/deepseek-chat)
           </span>
         </footer>
       </div>
