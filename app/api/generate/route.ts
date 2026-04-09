@@ -4,6 +4,7 @@ import {
   validateAndNormalizeUrl,
 } from '@/lib/article-parser'
 import { generateContent, type GenerateMode } from '@/lib/ai-client'
+import { apiJsonError } from '@/lib/api-json-error'
 
 interface GenerateRequestBody {
   url?: string
@@ -44,12 +45,8 @@ export async function POST(request: Request) {
       mode: body?.mode,
     })
 
-    // Валидация входных данных
     if (!body?.url || !body?.mode) {
-      return NextResponse.json(
-        { error: 'URL статьи и режим генерации обязательны' },
-        { status: 400 },
-      )
+      return apiJsonError('VALIDATION_BODY', 400)
     }
 
     let normalizedUrl: string
@@ -59,57 +56,33 @@ export async function POST(request: Request) {
       normalizedUrl = validateAndNormalizeUrl(body.url)
       mode = validateMode(body.mode)
     } catch (validationError) {
-      const message =
-        validationError instanceof Error
-          ? validationError.message
-          : 'Некорректные входные данные'
       console.error('[API /generate] Ошибка валидации', {
         requestId,
-        error: message,
+        error: validationError,
       })
-      return NextResponse.json({ error: message }, { status: 400 })
+      return apiJsonError('VALIDATION_INPUT', 400)
     }
 
-    // Парсинг статьи
     let parsedArticle
     try {
       parsedArticle = await parseArticleFromUrl(normalizedUrl)
     } catch (parseError) {
-      const message =
-        parseError instanceof Error
-          ? parseError.message
-          : 'Не удалось загрузить статью'
-      console.error('[API /generate] Ошибка парсинга', {
+      console.error('[API /generate] Ошибка загрузки или парсинга статьи', {
         requestId,
         url: normalizedUrl,
-        error: message,
+        error: parseError,
       })
-      return NextResponse.json(
-        {
-          error:
-            message.includes('HTTP')
-              ? message
-              : 'Не удалось загрузить статью. Проверьте URL и попробуйте позже',
-        },
-        { status: 400 },
-      )
+      return apiJsonError('ARTICLE_LOAD_FAILED', 422)
     }
 
-    // Проверка наличия контента
     if (!parsedArticle.content || parsedArticle.content.trim().length < 100) {
       console.error('[API /generate] Контент слишком короткий', {
         requestId,
         contentLength: parsedArticle.content?.length ?? 0,
       })
-      return NextResponse.json(
-        {
-          error: 'Не удалось извлечь текст статьи. Возможно, страница не содержит статьи',
-        },
-        { status: 400 },
-      )
+      return apiJsonError('ARTICLE_CONTENT_SHORT', 422)
     }
 
-    // Генерация через AI
     const origin = request.headers.get('origin')
 
     let result: string
@@ -122,32 +95,29 @@ export async function POST(request: Request) {
       )
     } catch (aiError) {
       const message =
-        aiError instanceof Error ? aiError.message : 'Ошибка сервиса генерации'
-
+        aiError instanceof Error ? aiError.message : 'unknown'
       console.error('[API /generate] Ошибка AI', {
         requestId,
         mode,
         error: message,
       })
 
-      // Определяем код ответа по типу ошибки
       if (
         message.includes('API-ключ') ||
         message.includes('не настроен') ||
-        message.includes('слишком короткая')
+        message.includes('OPENROUTER')
       ) {
-        return NextResponse.json({ error: message }, { status: 500 })
+        return apiJsonError('AI_SERVICE_UNAVAILABLE', 503)
       }
 
-      return NextResponse.json(
-        {
-          error:
-            message.includes('502') || message.includes('сервиса')
-              ? message
-              : 'Ошибка сервиса генерации. Попробуйте позже',
-        },
-        { status: 502 },
-      )
+      if (
+        message.includes('пустой') ||
+        message.includes('Пустой')
+      ) {
+        return apiJsonError('AI_EMPTY_RESPONSE', 502)
+      }
+
+      return apiJsonError('AI_SERVICE_UNAVAILABLE', 502)
     }
 
     console.log('[API /generate] Успешно сгенерирован контент', {
@@ -163,11 +133,6 @@ export async function POST(request: Request) {
       error,
     })
 
-    const message =
-      error instanceof Error
-        ? error.message
-        : 'Внутренняя ошибка сервера'
-
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiJsonError('INTERNAL', 500)
   }
 }

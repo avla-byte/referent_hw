@@ -4,6 +4,7 @@ import {
   validateAndNormalizeUrl,
   type ParsedArticle,
 } from '@/lib/article-parser'
+import { apiJsonError } from '@/lib/api-json-error'
 
 interface ParseRequestBody {
   url?: string
@@ -22,8 +23,16 @@ export async function POST(request: Request) {
       hasUrl: Boolean(body?.url),
     })
 
-    const normalizedUrl = validateAndNormalizeUrl(body.url)
-
+    let normalizedUrl: string
+    try {
+      normalizedUrl = validateAndNormalizeUrl(body.url)
+    } catch (validationError) {
+      console.warn('[API /parse] Ошибка валидации URL', {
+        requestId,
+        error: validationError,
+      })
+      return apiJsonError('VALIDATION_URL', 400)
+    }
     const result = await parseArticleFromUrl(normalizedUrl)
 
     return NextResponse.json<ParsedArticle>(
@@ -40,15 +49,6 @@ export async function POST(request: Request) {
       error,
     })
 
-    const message =
-      error instanceof Error ? error.message : 'Внутренняя ошибка сервера'
-
-    return NextResponse.json(
-      {
-        error: message,
-      },
-      { status: 400 },
-    )
+    return apiJsonError('ARTICLE_LOAD_FAILED', 400)
   }
 }
-

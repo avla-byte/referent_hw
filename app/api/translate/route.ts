@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server'
-import { getOpenRouterApiKey, OPENROUTER_URL, OPENROUTER_MODEL } from '@/lib/openrouter'
+import {
+  getOpenRouterApiKey,
+  OPENROUTER_URL,
+  OPENROUTER_MODEL,
+} from '@/lib/openrouter'
+import { apiJsonError } from '@/lib/api-json-error'
 
 interface TranslateRequestBody {
   content?: string
@@ -13,13 +18,20 @@ export async function POST(request: Request) {
     const content = typeof body?.content === 'string' ? body.content.trim() : ''
 
     if (!content) {
-      return NextResponse.json(
-        { error: 'Текст статьи для перевода обязателен' },
-        { status: 400 },
-      )
+      return apiJsonError('VALIDATION_BODY', 400)
     }
 
-    const apiKey = getOpenRouterApiKey()
+    let apiKey: string
+    try {
+      apiKey = getOpenRouterApiKey()
+    } catch (keyError) {
+      console.error('[API /translate] Нет API-ключа', {
+        requestId,
+        error: keyError,
+      })
+      return apiJsonError('AI_SERVICE_UNAVAILABLE', 503)
+    }
+
     const origin = request.headers.get('origin')
 
     const response = await fetch(OPENROUTER_URL, {
@@ -48,12 +60,7 @@ export async function POST(request: Request) {
         status: response.status,
         body: errText,
       })
-      return NextResponse.json(
-        {
-          error: `Ошибка сервиса перевода (${response.status}). Попробуйте позже.`,
-        },
-        { status: 502 },
-      )
+      return apiJsonError('AI_SERVICE_UNAVAILABLE', 502)
     }
 
     const data = (await response.json()) as {
@@ -67,17 +74,12 @@ export async function POST(request: Request) {
       console.error('[API /translate] Пустой ответ от модели', {
         requestId,
       })
-      return NextResponse.json(
-        { error: 'Сервис вернул пустой перевод' },
-        { status: 502 },
-      )
+      return apiJsonError('AI_EMPTY_RESPONSE', 502)
     }
 
     return NextResponse.json({ translation }, { status: 200 })
   } catch (error) {
     console.error('[API /translate] Исключение', { requestId, error })
-    const message =
-      error instanceof Error ? error.message : 'Внутренняя ошибка сервера'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return apiJsonError('INTERNAL', 500)
   }
 }

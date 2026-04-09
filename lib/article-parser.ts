@@ -17,18 +17,9 @@ export function validateAndNormalizeUrl(rawUrl: string | undefined): string {
 
   const trimmed = rawUrl.trim()
 
+  let parsed: URL
   try {
-    const parsed = new URL(trimmed)
-
-    if (!/^https?:$/.test(parsed.protocol)) {
-      throw new Error('URL должен начинаться с http:// или https://')
-    }
-
-    if (!parsed.hostname) {
-      throw new Error('Некорректный URL: отсутствует домен')
-    }
-
-    return parsed.toString()
+    parsed = new URL(trimmed)
   } catch (error) {
     console.error('[article-parser] Ошибка валидации URL', {
       rawUrl,
@@ -36,6 +27,16 @@ export function validateAndNormalizeUrl(rawUrl: string | undefined): string {
     })
     throw new Error('Некорректный URL статьи')
   }
+
+  if (!/^https?:$/.test(parsed.protocol)) {
+    throw new Error('URL должен начинаться с http:// или https://')
+  }
+
+  if (!parsed.hostname) {
+    throw new Error('Некорректный URL: отсутствует домен')
+  }
+
+  return parsed.toString()
 }
 
 function extractDate($: cheerio.CheerioAPI): string | null {
@@ -296,6 +297,7 @@ export async function parseArticleFromUrl(
   try {
     const response = await fetch(url, {
       method: 'GET',
+      signal: AbortSignal.timeout(60_000),
       headers: {
         'User-Agent':
           'ReferentHW/1.0 (+https://localhost) Mozilla/5.0 (compatible; ReferentBot/1.0)',
