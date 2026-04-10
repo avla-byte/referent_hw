@@ -15,7 +15,9 @@ export async function textToImage(
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const token = getHuggingFaceApiKey()
   const model = getHuggingFaceImageModel()
-  const url = `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`
+  // Старый хост api-inference.huggingface.co отключён (ответ 410 Gone).
+  // Актуальный serverless Inference: router + префикс hf-inference.
+  const url = `https://router.huggingface.co/hf-inference/models/${model}`
   const trimmedPrompt = prompt.trim().slice(0, 2000)
 
   if (!trimmedPrompt) {

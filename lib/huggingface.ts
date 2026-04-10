@@ -18,7 +18,10 @@ export function getHuggingFaceApiKey(): string {
   return key
 }
 
-/** ID модели на Hub; при необходимости переопределите в .env.local */
+/**
+ * ID модели на Hub (формат org/name).
+ * Переопределение: HUGGINGFACE_IMAGE_MODEL в .env / Vercel.
+ */
 export function getHuggingFaceImageModel(): string {
   const model = process.env.HUGGINGFACE_IMAGE_MODEL?.trim()
   return model || 'black-forest-labs/FLUX.1-schnell'
