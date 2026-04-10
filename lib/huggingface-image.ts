@@ -1,127 +1,62 @@
 import {
+  InferenceClient,
+  type InferenceProviderOrPolicy,
+} from '@huggingface/inference'
+import {
   getHuggingFaceApiKey,
   getHuggingFaceImageModel,
+  getHuggingFaceInferenceProvider,
 } from './huggingface'
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 /**
- * Генерирует изображение по текстовому промпту через Hugging Face Inference API.
+ * Генерирует изображение по текстовому промпту через Hugging Face Inference Providers.
+ * Используется официальный клиент: он сам запрашивает маршрут у Hub и не ходит на устаревший api-inference.huggingface.co (410 Gone).
  */
 export async function textToImage(
   prompt: string,
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const token = getHuggingFaceApiKey()
   const model = getHuggingFaceImageModel()
-  // Старый хост api-inference.huggingface.co отключён (ответ 410 Gone).
-  // Актуальный serverless Inference: router + префикс hf-inference.
-  const url = `https://router.huggingface.co/hf-inference/models/${model}`
+  const provider = getHuggingFaceInferenceProvider()
   const trimmedPrompt = prompt.trim().slice(0, 2000)
 
   if (!trimmedPrompt) {
     throw new Error('Пустой промпт для генерации изображения')
   }
 
-  const maxAttempts = 2
+  console.log('[huggingface-image] textToImage через InferenceClient', {
+    model,
+    provider: provider ?? 'auto',
+    promptLength: trimmedPrompt.length,
+  })
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    console.log('[huggingface-image] Запрос text-to-image', {
-      model,
-      attempt,
-      promptLength: trimmedPrompt.length,
-    })
+  const client = new InferenceClient(token)
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
+  try {
+    const blob = await client.textToImage(
+      {
+        model,
+        inputs: trimmedPrompt,
+        ...(provider
+          ? { provider: provider as InferenceProviderOrPolicy }
+          : {}),
       },
-      body: JSON.stringify({ inputs: trimmedPrompt }),
-    })
+      { outputType: 'blob' },
+    )
 
-    const contentType = response.headers.get('content-type') || ''
-
-    if (
-      response.status === 503 &&
-      contentType.includes('application/json') &&
-      attempt < maxAttempts
-    ) {
-      let estimatedSeconds = 10
-      try {
-        const payload = (await response.json()) as {
-          estimated_time?: number
-        }
-        if (typeof payload?.estimated_time === 'number') {
-          estimatedSeconds = Math.min(
-            Math.max(payload.estimated_time, 1),
-            120,
-          )
-        }
-      } catch {
-        /* ignore */
-      }
-      const waitMs = estimatedSeconds * 1000
-      console.log('[huggingface-image] Модель загружается, повтор', {
-        waitMs,
-      })
-      await sleep(waitMs)
-      continue
-    }
-
-    if (!response.ok) {
-      let detail: string | undefined
-      try {
-        if (contentType.includes('application/json')) {
-          const errJson = (await response.json()) as { error?: string }
-          detail = errJson?.error
-        } else {
-          detail = (await response.text()).slice(0, 500)
-        }
-      } catch {
-        detail = undefined
-      }
-      console.error('[huggingface-image] Ошибка ответа HF', {
-        status: response.status,
-        detail,
-      })
-      throw new Error(
-        `Ошибка генерации изображения (${response.status}). Попробуйте позже.`,
-      )
-    }
-
-    if (contentType.includes('application/json')) {
-      let errMessage: string | undefined
-      try {
-        const errJson = (await response.json()) as { error?: string }
-        errMessage = errJson?.error
-      } catch {
-        errMessage = undefined
-      }
-      console.error('[huggingface-image] Вместо изображения пришёл JSON', {
-        errMessage,
-      })
-      throw new Error(
-        errMessage ||
-          'Сервис изображений вернул ошибку вместо файла картинки.',
-      )
-    }
-
-    const arrayBuffer = await response.arrayBuffer()
+    const arrayBuffer = await blob.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
     if (buffer.length < 80) {
-      console.error('[huggingface-image] Слишком короткий бинарный ответ', {
+      console.error('[huggingface-image] Слишком короткий ответ', {
         length: buffer.length,
       })
       throw new Error('Сервис вернул некорректные данные изображения.')
     }
 
     const mime =
-      contentType.startsWith('image/') && !contentType.includes('json')
-        ? contentType.split(';')[0].trim()
+      blob.type && blob.type.startsWith('image/')
+        ? blob.type.split(';')[0].trim()
         : 'image/png'
 
     console.log('[huggingface-image] Изображение получено', {
@@ -130,7 +65,15 @@ export async function textToImage(
     })
 
     return { buffer, contentType: mime }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[huggingface-image] Ошибка InferenceClient', {
+      message,
+      error,
+    })
+    throw new Error(
+      message ||
+        'Ошибка генерации изображения. Проверьте модель и токен Hugging Face.',
+    )
   }
-
-  throw new Error('Не удалось получить изображение после повторной попытки.')
 }
