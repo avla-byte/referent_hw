@@ -81,6 +81,94 @@ export async function generateContent(
   return result
 }
 
+const MAX_ARTICLE_CHARS_FOR_IMAGE_PROMPT = 12_000
+
+/**
+ * По тексту статьи формирует промпт на английском для text-to-image (иллюстрация к посту в Telegram).
+ */
+export async function generateImagePromptFromArticle(
+  title: string | null,
+  content: string | null,
+  origin: string | null = null,
+): Promise<string> {
+  if (!content || content.trim().length < 100) {
+    throw new Error('Статья слишком короткая для обработки')
+  }
+
+  let body = content
+  if (body.length > MAX_ARTICLE_CHARS_FOR_IMAGE_PROMPT) {
+    body =
+      body.slice(0, MAX_ARTICLE_CHARS_FOR_IMAGE_PROMPT) +
+      '\n\n[... текст сокращён для промпта ...]'
+  }
+
+  const titlePart = title ? `Заголовок статьи: ${title}\n\n` : ''
+
+  const userMessage = `На основе следующей англоязычной статьи составь ОДИН промпт на английском языке для генерации изображения-иллюстрации к посту в Telegram.
+
+Требования:
+- Выведи только текст промпта для модели text-to-image, без кавычек, без преамбулы («Here is...») и без нумерации.
+- Опиши одну ясную визуальную сцену или метафору, отражающую главную идею статьи.
+- Стиль: modern editorial illustration, clean composition, soft professional lighting, harmonious colors.
+- Без текста, букв, логотипов и водяных знаков на изображении (explicitly: no text, no letters, no watermark).
+- До ~80 слов, одним абзацем или одной строкой.
+
+${titlePart}Текст статьи:
+${body}`
+
+  const apiKey = getOpenRouterApiKey()
+
+  console.log('[ai-client] Запрос к OpenRouter (промпт для картинки)', {
+    contentLength: content.length,
+    titleLength: title?.length ?? 0,
+  })
+
+  const response = await fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'HTTP-Referer': origin || '',
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages: [{ role: 'user', content: userMessage }],
+      max_tokens: 500,
+    }),
+  })
+
+  if (!response.ok) {
+    const errText = await response.text()
+    console.error('[ai-client] Ошибка OpenRouter (image prompt)', {
+      status: response.status,
+      body: errText,
+    })
+    throw new Error(
+      `Ошибка сервиса генерации (${response.status}). Попробуйте позже.`,
+    )
+  }
+
+  const data = (await response.json()) as OpenRouterResponse
+  let result = data?.choices?.[0]?.message?.content?.trim() ?? ''
+
+  if (!result) {
+    console.error('[ai-client] Пустой ответ модели (image prompt)')
+    throw new Error('Сервис вернул пустой промпт для изображения')
+  }
+
+  result = result.replace(/^["']|["']$/g, '').trim()
+
+  if (!result) {
+    throw new Error('Сервис вернул пустой промпт для изображения')
+  }
+
+  console.log('[ai-client] Промпт для изображения готов', {
+    length: result.length,
+  })
+
+  return result
+}
+
 function buildPrompt(
   title: string | null,
   content: string,

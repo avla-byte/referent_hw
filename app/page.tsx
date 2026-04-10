@@ -14,7 +14,12 @@ interface ParsedArticle {
   content: string | null
 }
 
-type ActionType = 'summary' | 'thesis' | 'telegram' | 'translate'
+type ActionType =
+  | 'summary'
+  | 'thesis'
+  | 'telegram'
+  | 'translate'
+  | 'illustration'
 
 interface ActionMeta {
   id: ActionType
@@ -42,6 +47,12 @@ const ACTIONS: ActionMeta[] = [
     id: 'translate',
     label: 'Перевод',
     description: 'Полный перевод статьи на русский язык.',
+  },
+  {
+    id: 'illustration',
+    label: 'Иллюстрация',
+    description:
+      'Промпт через OpenRouter и картинка через Hugging Face для поста в Telegram.',
   },
 ]
 
@@ -80,6 +91,9 @@ export default function Home() {
   const [result, setResult] = useState<string>('')
   const [isCopied, setIsCopied] = useState(false)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [illustrationDataUrl, setIllustrationDataUrl] = useState<string | null>(
+    null,
+  )
 
   const resultSectionRef = useRef<HTMLElement>(null)
   const requestEpochRef = useRef(0)
@@ -133,6 +147,7 @@ export default function Home() {
     setResult('')
     setIsCopied(false)
     setOperationError(null)
+    setIllustrationDataUrl(null)
     console.log('[UI] Сброс формы и состояния')
   }, [])
 
@@ -159,16 +174,23 @@ export default function Home() {
       setSelectedAction(action)
       setIsLoading(true)
       setResult('')
+      setIllustrationDataUrl(null)
 
       const loadingMessage =
         action === 'translate'
           ? 'Загружаю статью…'
-          : 'Загружаю статью и формирую ответ…'
+          : action === 'illustration'
+            ? 'Статья → промпт (OpenRouter) → картинка (Hugging Face)…'
+            : 'Загружаю статью и формирую ответ…'
       setLoadingStatus(loadingMessage)
 
       try {
         // Для кнопок summary, thesis, telegram используем новый endpoint /api/generate
-        if (action === 'summary' || action === 'thesis' || action === 'telegram') {
+        if (
+          action === 'summary' ||
+          action === 'thesis' ||
+          action === 'telegram'
+        ) {
           console.log('[UI] Запускаем генерацию через API /generate', {
             url,
             action,
@@ -208,6 +230,63 @@ export default function Home() {
 
           if (!isStale()) {
             setResult(data.result ?? '')
+          }
+          return
+        }
+
+        if (action === 'illustration') {
+          console.log('[UI] Запрос иллюстрации через /api/illustration', {
+            url,
+          })
+
+          const response = await fetch('/api/illustration', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ url }),
+          })
+
+          if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null)
+
+            console.error('[UI] API /illustration вернул ошибку', {
+              status: response.status,
+              body: errorPayload,
+            })
+
+            if (!isStale()) {
+              setOperationError(
+                messageForApiFailure(response.status, errorPayload),
+              )
+            }
+            return
+          }
+
+          const data = (await response.json()) as {
+            prompt?: string
+            imageBase64?: string
+            mimeType?: string
+          }
+
+          const mime =
+            typeof data.mimeType === 'string' && data.mimeType.startsWith('image/')
+              ? data.mimeType
+              : 'image/png'
+          const b64 = typeof data.imageBase64 === 'string' ? data.imageBase64 : ''
+          const promptText =
+            typeof data.prompt === 'string' ? data.prompt : ''
+
+          if (!b64 || !promptText) {
+            if (!isStale()) {
+              setOperationError(USER_FACING_API_MESSAGES.AI_EMPTY_RESPONSE)
+            }
+            return
+          }
+
+          if (!isStale()) {
+            setResult(promptText)
+            setIllustrationDataUrl(`data:${mime};base64,${b64}`)
           }
           return
         }
@@ -322,7 +401,7 @@ export default function Home() {
           </h1>
           <p className="break-words text-sm leading-relaxed text-slate-400 md:text-base">
             Вставьте ссылку на англоязычную статью, выберите формат ответа и
-            получите готовый русский текст: обзор, тезисы или пост для Telegram.
+            получите готовый русский текст или иллюстрацию для поста в Telegram.
           </p>
         </header>
 
@@ -366,7 +445,7 @@ export default function Home() {
           <p className="break-words text-sm font-medium text-slate-200">
             Что нужно получить от статьи?
           </p>
-          <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {ACTIONS.map((action) => {
               const isSelected = selectedAction === action.id
 
@@ -394,8 +473,9 @@ export default function Home() {
             })}
           </div>
           <p className="break-words text-xs leading-relaxed text-slate-500">
-            Кнопка запускает обработку указанной статьи через AI. Для генерации
-            используется модель deepseek/deepseek-chat через OpenRouter.
+            Текст: OpenRouter (deepseek/deepseek-chat). Иллюстрация: сначала
+            промпт там же, затем картинка через Hugging Face Inference (токен{' '}
+            <span className="whitespace-nowrap">HUGGINGFACE</span> в .env.local).
           </p>
         </section>
 
@@ -409,7 +489,8 @@ export default function Home() {
               Результат генерации
             </p>
             <p className="mt-0.5 break-words text-xs leading-relaxed text-slate-500">
-              Здесь появится текст на русском после обработки статьи.
+              Текст на русском или картинка и английский промпт для режима
+              «Иллюстрация».
             </p>
           </div>
 
@@ -437,7 +518,56 @@ export default function Home() {
           )}
 
           <div className="mt-2 min-h-[120px] min-w-0 rounded-lg border border-dashed border-slate-700 bg-slate-900/60 p-3 text-sm leading-relaxed text-slate-200 sm:p-4">
-            {result && !operationError ? (
+            {illustrationDataUrl && selectedAction === 'illustration' && !operationError ? (
+              <>
+                <div className="mb-3 flex min-w-0 flex-col gap-2 sm:mb-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  {selectedActionMeta ? (
+                    <p className="min-w-0 break-words text-xs font-medium uppercase tracking-wide text-emerald-300">
+                      {selectedActionMeta.label}
+                    </p>
+                  ) : (
+                    <span className="hidden sm:block" />
+                  )}
+                  {!isLoading && (
+                    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                      <a
+                        href={illustrationDataUrl}
+                        download={
+                          illustrationDataUrl.startsWith('data:image/jpeg')
+                            ? 'telegram-illustration.jpg'
+                            : 'telegram-illustration.png'
+                        }
+                        className="inline-flex w-full items-center justify-center rounded-full border border-slate-600 bg-slate-900/90 px-3 py-1.5 text-[11px] font-medium text-slate-200 shadow-sm transition hover:border-emerald-400 hover:text-emerald-300 sm:w-auto"
+                      >
+                        Скачать картинку
+                      </a>
+                      <button
+                        type="button"
+                        title="Скопировать промпт для изображения (английский)"
+                        onClick={handleCopyClick}
+                        className="inline-flex w-full shrink-0 items-center justify-center rounded-full border border-slate-600 bg-slate-900/90 px-3 py-1.5 text-[11px] font-medium text-slate-200 shadow-sm transition hover:border-emerald-400 hover:text-emerald-300 sm:w-auto sm:py-1"
+                      >
+                        {isCopied ? 'Скопировано' : 'Копировать промпт'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="mb-3 min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950/40">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={illustrationDataUrl}
+                    alt="Сгенерированная иллюстрация к посту"
+                    className="mx-auto max-h-[min(70vh,520px)] w-full max-w-full object-contain"
+                  />
+                </div>
+                <p className="mb-1 text-[11px] font-medium text-slate-400">
+                  Промпт для генерации (англ.)
+                </p>
+                <pre className="max-w-full min-w-0 overflow-x-auto whitespace-pre-wrap break-words text-xs text-slate-100">
+                  {result}
+                </pre>
+              </>
+            ) : result && !operationError ? (
               <>
                 <div className="mb-3 flex min-w-0 flex-col gap-2 sm:mb-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   {selectedActionMeta ? (
@@ -493,7 +623,7 @@ export default function Home() {
             Референт HW · учебное приложение на Next.js + Tailwind CSS
           </span>
           <span className="max-w-full break-words text-slate-600">
-            Генерация через OpenRouter AI (deepseek/deepseek-chat)
+            Текст: OpenRouter · картинки: Hugging Face Inference
           </span>
         </footer>
       </div>
